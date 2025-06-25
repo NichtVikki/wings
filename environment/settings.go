@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 
 	"github.com/pelican-dev/wings/config"
+	"github.com/pelican-dev/wings/internal/cgroup"
 )
 
 type Mount struct {
@@ -112,10 +113,19 @@ func (l Limits) AsContainerResources() container.Resources {
 		Memory:            l.BoundedMemoryLimit(),
 		MemoryReservation: l.MemoryLimit * 1024 * 1024,
 		MemorySwap:        l.ConvertedSwap(),
-		BlkioWeight:       l.IoWeight,
 		OomKillDisable:    boolPtr(!l.OOMKiller),
 		PidsLimit:         &pids,
 	}
+
+	// Handle IO weight differently for cgroup v1 vs v2
+	// Only set BlkioWeight on cgroup v1 systems to avoid path issues
+	if cgroup.IsCgroupV1() && l.IoWeight > 0 {
+		resources.BlkioWeight = l.IoWeight
+	}
+	// For cgroup v2, completely skip BlkioWeight to prevent container creation failures
+	// The Docker/runc implementation may not properly translate BlkioWeight to io.weight
+	// and can cause "no such file or directory" errors when trying to access cgroup v1 paths
+	// TODO: in the future this could be replaced with a more robust solution that uses cgroup v2's unified IO controller.
 
 	// If the CPU Limit is not set, don't send any of these fields through. Providing
 	// them seems to break some Java services that try to read the available processors.

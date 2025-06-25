@@ -18,6 +18,8 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 
+	"github.com/pelican-dev/wings/internal/cgroup"
+
 	"github.com/pelican-dev/wings/config"
 	"github.com/pelican-dev/wings/environment"
 	"github.com/pelican-dev/wings/system"
@@ -236,7 +238,6 @@ func (e *Environment) Create() error {
 		Tmpfs: map[string]string{
 			"/tmp": "rw,exec,nosuid,size=" + strconv.Itoa(int(cfg.Docker.TmpfsSize)) + "M",
 		},
-
 		// Define resource limits for the container based on the data passed through
 		// from the Panel.
 		Resources: e.Configuration.Limits().AsContainerResources(),
@@ -258,6 +259,25 @@ func (e *Environment) Create() error {
 		},
 		NetworkMode: networkMode,
 		UsernsMode:  container.UsernsMode(cfg.Docker.UsernsMode),
+	}
+	// Log cgroup information for diagnostics
+	limits := e.Configuration.Limits()
+
+	if cgroup.IsCgroupV2() {
+		e.log().Debug("creating container with cgroup v2 support")
+		if !cgroup.CheckCgroupV2MemoryAccounting() {
+			e.log().Warn("cgroup v2 memory controller not available - memory limits may not work correctly")
+		}
+		if limits.IoWeight > 0 {
+			e.log().WithField("io_weight", limits.IoWeight).Info("IO weight configured but disabled on cgroup v2 to prevent container creation failures")
+		}
+	} else if cgroup.IsCgroupV1() {
+		e.log().Debug("creating container with cgroup v1 support")
+		if limits.IoWeight > 0 {
+			e.log().WithField("io_weight", limits.IoWeight).Debug("setting IO weight for cgroup v1")
+		}
+	} else {
+		e.log().Warn("unable to detect cgroup version - container limits may not work properly")
 	}
 
 	if _, err := e.client.ContainerCreate(ctx, conf, hostConf, nil, nil, e.Id); err != nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/goccy/go-json"
 
 	"github.com/pelican-dev/wings/environment"
+	"github.com/pelican-dev/wings/internal/cgroup"
 )
 
 // Uptime returns the current uptime of the container in milliseconds. If the
@@ -102,16 +103,28 @@ func (e *Environment) pollResources(ctx context.Context) error {
 // This math is from their CLI repository in order to show the same values to avoid people
 // bothering me about it. It should also reflect a slightly more correct memory value anyways.
 //
+// Updated to support both cgroup v1 and v2 memory calculations.
 // @see https://github.com/docker/cli/blob/96e1d1d6/cli/command/container/stats_helpers.go#L227-L249
 func calculateDockerMemory(stats container.MemoryStats) uint64 {
-	if v, ok := stats.Stats["total_inactive_file"]; ok && v < stats.Usage {
-		return stats.Usage - v
+	// Determine which memory accounting method to use based on cgroup version
+	if cgroup.IsCgroupV2() {
+		// For cgroup v2, try to get the inactive_file value
+		if v, ok := stats.Stats["inactive_file"]; ok && v < stats.Usage {
+			return stats.Usage - v
+		}
+	} else {
+		// For cgroup v1, try to get total_inactive_file value first
+		if v, ok := stats.Stats["total_inactive_file"]; ok && v < stats.Usage {
+			return stats.Usage - v
+		}
+
+		// For cgroup v1 fallback, try inactive_file
+		if v, ok := stats.Stats["inactive_file"]; ok && v < stats.Usage {
+			return stats.Usage - v
+		}
 	}
 
-	if v := stats.Stats["inactive_file"]; v < stats.Usage {
-		return stats.Usage - v
-	}
-
+	// If no inactive file stats are available, return the raw usage
 	return stats.Usage
 }
 

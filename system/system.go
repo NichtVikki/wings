@@ -20,6 +20,8 @@ import (
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/load"
 	"github.com/shirou/gopsutil/v3/mem"
+
+	"github.com/pelican-dev/wings/internal/cgroup"
 )
 
 type Information struct {
@@ -133,14 +135,13 @@ func GetSystemInformation() (*Information, error) {
 		filesystem = v[1]
 		break
 	}
-
 	return &Information{
 		Version: Version,
 		Docker: DockerInformation{
 			Version: version.Version,
 			Cgroups: DockerCgroups{
 				Driver:  info.CgroupDriver,
-				Version: info.CgroupVersion,
+				Version: getCgroupVersion(info.CgroupVersion),
 			},
 			Containers: DockerContainers{
 				Total:   info.Containers,
@@ -398,4 +399,17 @@ func GetDockerInfo(ctx context.Context) (types.Version, system.Info, error) {
 	}
 
 	return dockerVersion, dockerInfo, nil
+}
+
+// getCgroupVersion returns the cgroup version, using Docker's reported version
+// with a fallback to our own detection for better compatibility
+func getCgroupVersion(dockerVersion string) string {
+	// If Docker reports a version, use it
+	if dockerVersion != "" {
+		return dockerVersion
+	}
+
+	// Fallback to our own detection
+	detectedVersion := cgroup.DetectCgroupVersion()
+	return detectedVersion.String()
 }

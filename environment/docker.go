@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker/client"
 
 	"github.com/pelican-dev/wings/config"
+	"github.com/pelican-dev/wings/internal/cgroup"
 )
 
 var (
@@ -31,6 +32,11 @@ func Docker() (*client.Client, error) {
 
 // ConfigureDocker configures the required network for the docker environment.
 func ConfigureDocker(ctx context.Context) error {
+	// Check cgroup compatibility first
+	if err := checkCgroupCompatibility(); err != nil {
+		return err
+	}
+
 	// Ensure the required docker network exists on the system.
 	cli, err := Docker()
 	if err != nil {
@@ -103,5 +109,58 @@ func createDockerNetwork(ctx context.Context, cli *client.Client) error {
 			c.Docker.Network.Interface = c.Docker.Network.Interfaces.V4.Gateway
 		})
 	}
+	return nil
+}
+
+// checkCgroupCompatibility performs comprehensive cgroup compatibility checks
+func checkCgroupCompatibility() error {
+	cgroupInfo := cgroup.GetCgroupInfo()
+	version := cgroup.DetectCgroupVersion()
+
+	log.WithField("cgroup_version", version.String()).Info("detected cgroup version")
+
+	switch version {
+	case cgroup.CgroupV1:
+		log.Debug("using cgroup v1 - checking controller availability")
+		if controllers, ok := cgroupInfo["controllers"].([]string); ok {
+			log.WithField("controllers", controllers).Debug("available cgroup v1 controllers")
+
+			// Check for essential controllers
+			required := []string{"memory", "cpu", "cpuacct", "blkio", "devices"}
+			for _, req := range required {
+				found := false
+				for _, avail := range controllers {
+					if avail == req {
+						found = true
+						break
+					}
+				}
+				if !found {
+					log.WithField("controller", req).Warn("required cgroup v1 controller not available")
+				}
+			}
+		}
+
+	case cgroup.CgroupV2:
+		log.Debug("using cgroup v2 - checking unified hierarchy")
+
+		if !cgroup.CheckCgroupV2MemoryAccounting() {
+			log.Warn("cgroup v2 memory controller not available - memory limits may not work correctly")
+			log.Warn("to enable memory accounting, add 'systemd.unified_cgroup_hierarchy=1 cgroup_enable=memory' to kernel parameters")
+		}
+
+		if controllers, ok := cgroupInfo["controllers"].([]string); ok {
+			log.WithField("controllers", controllers).Debug("available cgroup v2 controllers")
+		}
+
+	case cgroup.CgroupUnknown:
+		return errors.New("unable to detect cgroup version - container resource limits may not work")
+	}
+
+	// Check write permissions
+	if !cgroup.CheckCgroupWritePermissions() {
+		log.Warn("insufficient permissions to write to cgroup filesystem - some resource limits may not work")
+	}
+
 	return nil
 }

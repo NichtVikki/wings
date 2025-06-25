@@ -19,14 +19,15 @@ import (
 	"github.com/AlecAivazis/survey/v2/terminal"
 	"github.com/apex/log"
 	"github.com/docker/docker/api/types"
+	dockerSystem "github.com/docker/docker/api/types/system" // Alias the correct system package
 	"github.com/docker/docker/pkg/parsers/kernel"
 	"github.com/docker/docker/pkg/parsers/operatingsystem"
 	"github.com/goccy/go-json"
 	"github.com/spf13/cobra"
-	dockerSystem "github.com/docker/docker/api/types/system" // Alias the correct system package
 
 	"github.com/pelican-dev/wings/config"
 	"github.com/pelican-dev/wings/environment"
+	"github.com/pelican-dev/wings/internal/cgroup"
 	"github.com/pelican-dev/wings/loggers/cli"
 	"github.com/pelican-dev/wings/system"
 )
@@ -150,6 +151,17 @@ func diagnosticsCmdRun(*cobra.Command, []string) {
 		}
 		fmt.Fprintln(output, "LoggingDriver:", dockerInfo.LoggingDriver)
 		fmt.Fprintln(output, " CgroupDriver:", dockerInfo.CgroupDriver)
+		fmt.Fprintln(output, " CgroupVersion:", dockerInfo.CgroupVersion)
+
+		// Add detailed cgroup information
+		cgroupInfo := cgroup.GetCgroupInfo()
+		fmt.Fprintf(output, " CgroupDetected: %v\n", cgroupInfo["version"])
+		if controllers, ok := cgroupInfo["controllers"].([]string); ok && len(controllers) > 0 {
+			fmt.Fprintf(output, " CgroupControllers: %v\n", strings.Join(controllers, ", "))
+		}
+		fmt.Fprintf(output, " CgroupV2MemoryAccounting: %v\n", cgroup.CheckCgroupV2MemoryAccounting())
+		fmt.Fprintf(output, " CgroupWritePermissions: %v\n", cgroup.CheckCgroupWritePermissions())
+
 		if len(dockerInfo.Warnings) > 0 {
 			for _, w := range dockerInfo.Warnings {
 				fmt.Fprintln(output, w)
